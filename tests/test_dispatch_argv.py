@@ -257,6 +257,57 @@ def test_shard_input_empty_directory_errors(tmp_path):
     assert "contains no files" in result.output
 
 
+NOT_BAKED_BASE_ARGS = [
+    "dispatch",
+    "--hail-image", "img:latest",
+    "--hail-billing-project", "bp",
+    "--hail-tmp-bucket", "gs://b/tmp",
+    "--hail-dry-run",
+]
+
+
+def test_verify_args_baked_is_skipped(tmp_path):
+    result = runner.invoke(app, BASE_ARGS + ["--verify-args", "myscript.py", "--foo", "bar"])
+    assert result.exit_code == 0, result.output
+    assert "--verify-args: skipped (--baked" in result.output
+
+
+def test_verify_args_no_framework_detected_skips_and_proceeds(tmp_path):
+    script = tmp_path / "plain.py"
+    script.write_text("import sys\nprint(sys.argv[1:])\n")
+    result = runner.invoke(app, NOT_BAKED_BASE_ARGS + ["--verify-args", str(script), "--foo", "bar"])
+    assert result.exit_code == 0, result.output
+    assert "no argparse/click/typer import detected" in result.output
+    assert "Submitting 1 job(s)" in result.output
+
+
+def test_verify_args_argparse_good_args_proceeds(tmp_path):
+    script = tmp_path / "s.py"
+    script.write_text(
+        "import argparse\n"
+        "p = argparse.ArgumentParser()\n"
+        "p.add_argument('--foo', required=True, type=int)\n"
+        "p.parse_args()\n"
+    )
+    result = runner.invoke(app, NOT_BAKED_BASE_ARGS + ["--verify-args", str(script), "--foo", "3"])
+    assert result.exit_code == 0, result.output
+    assert "Submitting 1 job(s)" in result.output
+
+
+def test_verify_args_argparse_missing_required_blocks_submission(tmp_path):
+    script = tmp_path / "s.py"
+    script.write_text(
+        "import argparse\n"
+        "p = argparse.ArgumentParser()\n"
+        "p.add_argument('--foo', required=True, type=int)\n"
+        "p.parse_args()\n"
+    )
+    result = runner.invoke(app, NOT_BAKED_BASE_ARGS + ["--verify-args", str(script)])
+    assert result.exit_code != 0
+    assert "rejected args during local --verify-args check" in result.output
+    assert "Submitting" not in result.output
+
+
 def test_shard_format_ignored_in_directory_mode_warns(tmp_path):
     shard_dir = tmp_path / "shards"
     shard_dir.mkdir()

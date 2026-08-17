@@ -8,6 +8,9 @@ passthrough (Click's ignore_unknown_options/allow_extra_args) regardless of whet
 looks like a flag -- as long as hailrun's own options come before the script path. An
 explicit literal `--` still works too (Click's standard "stop parsing options" marker),
 useful if a script argument happens to collide with a hailrun option name.
+
+Pass --verify-args for a best-effort local check that the script's own argparse/click/
+typer parser accepts the given script args before submitting -- see hailrun.verify.
 """
 
 import os
@@ -57,6 +60,15 @@ def run(
     hail_env: list[str] = typer.Option([], "--hail-env", help="KEY=VAL, repeatable, kept off the command line."),
     hail_wait: bool = typer.Option(False, "--hail-wait/--hail-no-wait"),
     hail_dry_run: bool = typer.Option(False, "--hail-dry-run"),
+    verify_args: bool = typer.Option(
+        False,
+        "--verify-args",
+        help=(
+            "Best-effort local check that the script's own argparse/click/typer parser "
+            "accepts the script args before submitting (skipped for --baked scripts or "
+            "if no argparse/click/typer import is detected in the script)."
+        ),
+    ),
     context_dir: Path | None = typer.Option(None, "--context-dir", help="Defaults to the script's own directory."),
     context_exclude: list[str] = typer.Option([], "--context-exclude", help="Extra exclude pattern, repeatable."),
     baked: bool = typer.Option(
@@ -224,6 +236,26 @@ def run(
             wrap_tokens += ["--hail-batch-name", job_name, "--"]
             tokens = wrap_tokens + tokens
         return shlex.join(tokens)
+
+    if verify_args:
+        if baked:
+            typer.echo("  ! --verify-args: skipped (--baked scripts have no local file to check)")
+        else:
+            from hailrun import verify as verify_mod
+
+            verify_shard_values = [str(p) for p in shard_paths] if shard_paths else []
+            verify_tokens = _job_tokens(0, verify_shard_values)
+            verify_pythonpath = [str(ctx_dir)]
+            if has_src_layout:
+                verify_pythonpath.append(str(ctx_dir / "src"))
+            result = verify_mod.verify_script_args(Path(script), verify_tokens, verify_pythonpath)
+            if result.status == "bad_args":
+                typer.echo(f"Error: script rejected args during local --verify-args check:\n{result.message}", err=True)
+                raise typer.Exit(1)
+            elif result.status == "skipped":
+                typer.echo(f"  ! --verify-args: {result.message}, skipping check")
+            elif result.status == "inconclusive":
+                typer.echo(f"  ! --verify-args: {result.message}, proceeding without check")
 
     if hail_dry_run:
         dry_run_shard_values = [str(p) for p in shard_paths]
