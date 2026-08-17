@@ -18,6 +18,7 @@ import argparse
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 from hailrun.wandb_utils import init_hail_wandb
 
@@ -31,7 +32,11 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
 
     parser = argparse.ArgumentParser(prog="python -m hailrun.wandb_wrap")
     parser.add_argument("--project", required=True)
-    parser.add_argument("--job-type", required=True)
+    parser.add_argument(
+        "--job-type",
+        default=None,
+        help="Defaults to the name of the wrapped script (the first token after '--').",
+    )
     parser.add_argument("--hail-batch-name", default=None)
     args = parser.parse_args(own_argv)
 
@@ -40,13 +45,27 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     return args, command
 
 
+_INTERPRETERS = {"python", "python3", "bash", "sh"}
+
+
+def _default_job_type(command: list[str]) -> str:
+    """Name of the wrapped script, skipping a leading interpreter token (and any flag
+    that follows it, e.g. `python -m`) if present."""
+    token = command[0]
+    if token in _INTERPRETERS:
+        rest = [t for t in command[1:] if not t.startswith("-")]
+        token = rest[0] if rest else token
+    return Path(token).stem
+
+
 def main(argv: list[str] | None = None) -> int:
     args, command = parse_args(argv if argv is not None else sys.argv[1:])
 
     if args.hail_batch_name and "HAIL_BATCH_NAME" not in os.environ:
         os.environ["HAIL_BATCH_NAME"] = args.hail_batch_name
 
-    run = init_hail_wandb(enabled=True, project=args.project, job_type=args.job_type, config={})
+    job_type = args.job_type or _default_job_type(command)
+    run = init_hail_wandb(enabled=True, project=args.project, job_type=job_type, config={})
 
     proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     for line in proc.stdout:

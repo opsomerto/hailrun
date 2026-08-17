@@ -66,3 +66,18 @@ def test_run_name_uses_batch_name_when_set(monkeypatch):
     wandb_utils.init_hail_wandb(enabled=True, project="proj", job_type="jt", config={})
 
     assert captured["name"] == "my-batch-job-j1-a-a1"
+
+
+def test_job_type_defaults_to_script_name(monkeypatch):
+    captured = {}
+
+    def fake_init(**kwargs):
+        captured.update(kwargs)
+        return "fake-run"
+
+    _install_fake_wandb(monkeypatch, fake_init)
+    monkeypatch.setattr(sys, "argv", ["/path/to/train_model.py", "--foo", "bar"])
+
+    wandb_utils.init_hail_wandb(enabled=True, project="proj", config={})
+
+    assert captured["job_type"] == "train_model"
