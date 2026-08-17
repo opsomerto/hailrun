@@ -308,6 +308,41 @@ def test_verify_args_argparse_missing_required_blocks_submission(tmp_path):
     assert "Submitting" not in result.output
 
 
+def _typer_script(tmp_path):
+    script = tmp_path / "s.py"
+    script.write_text(
+        "import typer\n"
+        "app = typer.Typer()\n"
+        "@app.command()\n"
+        "def main(foo: int = typer.Option(...)):\n"
+        "    print('RAN', foo)\n"
+        "if __name__ == '__main__':\n"
+        "    app()\n"
+    )
+    return script
+
+
+def test_verify_args_typer_good_args_proceeds(tmp_path):
+    script = _typer_script(tmp_path)
+    result = runner.invoke(app, NOT_BAKED_BASE_ARGS + ["--verify-args", str(script), "--foo", "3"])
+    assert result.exit_code == 0, result.output
+    assert "Submitting 1 job(s)" in result.output
+
+
+def test_verify_args_typer_unknown_flag_blocks_submission(tmp_path):
+    # Regression: a typer script rejecting an unrecognized flag ("No such option") must
+    # be caught the same way as it would if you ran the script directly -- not silently
+    # forwarded to Hail Batch.
+    script = _typer_script(tmp_path)
+    result = runner.invoke(
+        app, NOT_BAKED_BASE_ARGS + ["--verify-args", str(script), "--foo", "3", "--fake-arg", "KK"]
+    )
+    assert result.exit_code != 0
+    assert "rejected args during local --verify-args check" in result.output
+    assert "No such option" in result.output
+    assert "Submitting" not in result.output
+
+
 def test_shard_format_ignored_in_directory_mode_warns(tmp_path):
     shard_dir = tmp_path / "shards"
     shard_dir.mkdir()
