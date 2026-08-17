@@ -1,0 +1,63 @@
+"""python -m hailrun.wandb_wrap --project X --job-type Y [--hail-batch-name NAME] -- {command...}
+
+Auto-wraps an arbitrary subprocess command in a wandb run tied to the enclosing Hail
+Batch job, so the wrapped script needs zero wandb-specific code. Invoked directly as a
+job command string (not through the `hailrun` CLI), so this uses argparse and its own
+"--" split rather than typer.
+
+Empirically verified (not just assumed): a plain subprocess.run() inheriting stdio does
+NOT get captured into the run's Logs tab under wandb 0.28 -- confirmed by inspecting a
+real run's files via the API (no output.log at all). wandb's console capture wraps the
+*parent* process's own stdout, not an fd a child process writes to directly. So instead
+we pipe the subprocess and re-print each line from this (parent) process, which wandb's
+capture does pick up -- while still also reaching Hail Batch's own per-job log (which
+always captures this process's stdout regardless of wandb).
+"""
+
+import argparse
+import os
+import subprocess
+import sys
+
+from hailrun.wandb_utils import init_hail_wandb
+
+
+def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
+    if "--" in argv:
+        idx = argv.index("--")
+        own_argv, command = argv[:idx], argv[idx + 1 :]
+    else:
+        own_argv, command = argv, []
+
+    parser = argparse.ArgumentParser(prog="python -m hailrun.wandb_wrap")
+    parser.add_argument("--project", required=True)
+    parser.add_argument("--job-type", required=True)
+    parser.add_argument("--hail-batch-name", default=None)
+    args = parser.parse_args(own_argv)
+
+    if not command:
+        parser.error("no command given after '--'")
+    return args, command
+
+
+def main(argv: list[str] | None = None) -> int:
+    args, command = parse_args(argv if argv is not None else sys.argv[1:])
+
+    if args.hail_batch_name and "HAIL_BATCH_NAME" not in os.environ:
+        os.environ["HAIL_BATCH_NAME"] = args.hail_batch_name
+
+    run = init_hail_wandb(enabled=True, project=args.project, job_type=args.job_type, config={})
+
+    proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    for line in proc.stdout:
+        print(line, end="")
+    proc.wait()
+
+    if run is not None:
+        run.finish(exit_code=proc.returncode)
+
+    return proc.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())
