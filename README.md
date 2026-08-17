@@ -119,6 +119,16 @@ on the command line) and the image to have `hailrun[wandb]` installed. The scrip
 itself needs zero wandb-specific code -- hailrun wraps the job command in a wandb run
 tied to the job's Hail batch/job/attempt IDs.
 
+`--wandb-project` and `--wandb-job-type` can also come from `WANDB_PROJECT` /
+`WANDB_JOB_TYPE` env vars (e.g. in `.env`), so they don't need to be repeated on
+every `hailrun dispatch` call:
+
+```bash
+# .env
+WANDB_PROJECT=my-project
+WANDB_JOB_TYPE=my-job
+```
+
 ## Library use
 
 ```python

@@ -80,8 +80,8 @@ def run(
         ),
     ),
     wandb: bool = typer.Option(False, "--wandb/--no-wandb", help="Auto-wrap the job command in a wandb run."),
-    wandb_project: str | None = typer.Option(None, "--wandb-project"),
-    wandb_job_type: str | None = typer.Option(None, "--wandb-job-type"),
+    wandb_project: str | None = typer.Option(None, "--wandb-project", envvar="WANDB_PROJECT"),
+    wandb_job_type: str | None = typer.Option(None, "--wandb-job-type", envvar="WANDB_JOB_TYPE"),
 ) -> None:
     script_args: list[str] = list(ctx.args)
 
