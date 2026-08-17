@@ -7,17 +7,23 @@ dispatch/wandb_wrap), and layers the caller's own project/job_type/config on top
 """
 
 import os
+import sys
+from pathlib import Path
 
 
-def init_hail_wandb(enabled: bool, project: str, job_type: str, config: dict):
+def init_hail_wandb(enabled: bool, project: str, job_type: str | None = None, config: dict | None = None):
     """wandb.init(), or None if disabled/failed -- callers never need try/except.
 
     group = HAIL_BATCH_ID. run name = "{batch_name}-job-{HAIL_JOB_ID}-a-{HAIL_ATTEMPT_ID}",
-    so retried attempts never collide on the same run.
+    so retried attempts never collide on the same run. job_type defaults to the name of
+    the running script (sys.argv[0]) when not given.
     """
     if not enabled:
         return None
     import wandb
+
+    job_type = job_type or Path(sys.argv[0]).stem
+    config = config or {}
 
     batch_id = os.environ.get("HAIL_BATCH_ID")
     job_id = os.environ.get("HAIL_JOB_ID")

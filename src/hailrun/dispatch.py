@@ -81,7 +81,9 @@ def run(
     ),
     wandb: bool = typer.Option(False, "--wandb/--no-wandb", help="Auto-wrap the job command in a wandb run."),
     wandb_project: str | None = typer.Option(None, "--wandb-project", envvar="WANDB_PROJECT"),
-    wandb_job_type: str | None = typer.Option(None, "--wandb-job-type", envvar="WANDB_JOB_TYPE"),
+    wandb_job_type: str | None = typer.Option(
+        None, "--wandb-job-type", envvar="WANDB_JOB_TYPE", help="Defaults to the script's own name."
+    ),
 ) -> None:
     script_args: list[str] = list(ctx.args)
 
@@ -142,8 +144,8 @@ def run(
     if not hail_cpu and not hail_memory and not hail_machine_type:
         hail_machine_type = "n1-standard-4"
 
-    if wandb and (not wandb_project or not wandb_job_type):
-        typer.echo("Error: --wandb requires --wandb-project and --wandb-job-type", err=True)
+    if wandb and not wandb_project:
+        typer.echo("Error: --wandb requires --wandb-project", err=True)
         raise typer.Exit(1)
     wandb_api_key = os.environ.get("WANDB_API_KEY")
     if wandb and not wandb_api_key:
@@ -216,13 +218,11 @@ def run(
         target = f"{baked_path.rstrip('/')}/{script}" if baked else script_rel
         tokens = ["python", target] + _job_tokens(i, shard_values)
         if wandb:
-            tokens = [
-                "python", "-m", "hailrun.wandb_wrap",
-                "--project", wandb_project,
-                "--job-type", wandb_job_type,
-                "--hail-batch-name", job_name,
-                "--",
-            ] + tokens
+            wrap_tokens = ["python", "-m", "hailrun.wandb_wrap", "--project", wandb_project]
+            if wandb_job_type:
+                wrap_tokens += ["--job-type", wandb_job_type]
+            wrap_tokens += ["--hail-batch-name", job_name, "--"]
+            tokens = wrap_tokens + tokens
         return shlex.join(tokens)
 
     if hail_dry_run:

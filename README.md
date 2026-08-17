@@ -109,7 +109,7 @@ unchanged.
 ### wandb monitoring
 
 ```bash
-hailrun dispatch --wandb --wandb-project my-project --wandb-job-type my-job \
+hailrun dispatch --wandb --wandb-project my-project \
   --hail-image ... --hail-billing-project ... --hail-tmp-bucket ... \
   my_script.py
 ```
@@ -118,6 +118,9 @@ Requires `WANDB_API_KEY` in the submitting environment (forwarded to the job, ne
 on the command line) and the image to have `hailrun[wandb]` installed. The script
 itself needs zero wandb-specific code -- hailrun wraps the job command in a wandb run
 tied to the job's Hail batch/job/attempt IDs.
+
+`--wandb-job-type` is optional and defaults to the wrapped script's own name (e.g.
+`my_script.py` -> job_type `my_script`). Pass it explicitly to override.
 
 `--wandb-project` and `--wandb-job-type` can also come from `WANDB_PROJECT` /
 `WANDB_JOB_TYPE` env vars (e.g. in `.env`), so they don't need to be repeated on
@@ -134,7 +137,8 @@ WANDB_JOB_TYPE=my-job
 ```python
 from hailrun import init_hail_wandb
 
-run = init_hail_wandb(enabled=True, project="my-project", job_type="training", config={...})
+run = init_hail_wandb(enabled=True, project="my-project", config={...})
+# job_type defaults to the running script's own name; pass job_type="training" to override
 ```
 
 ```python

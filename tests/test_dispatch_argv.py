@@ -266,3 +266,28 @@ def test_shard_format_ignored_in_directory_mode_warns(tmp_path):
         app, BASE_ARGS + ["myscript.py", "--shard-input", str(shard_dir), "--shard-format", "csv"]
     )
     assert result.exit_code == 0, result.output
+
+
+def test_wandb_job_type_omitted_when_not_given(monkeypatch):
+    monkeypatch.setenv("WANDB_API_KEY", "fake-key")
+    monkeypatch.delenv("WANDB_JOB_TYPE", raising=False)
+    result = runner.invoke(app, BASE_ARGS + ["--wandb", "--wandb-project", "proj", "myscript.py"])
+    assert result.exit_code == 0, result.output
+    assert "--project proj" in result.output
+    assert "--job-type" not in result.output
+
+
+def test_wandb_job_type_passed_through_when_given(monkeypatch):
+    monkeypatch.setenv("WANDB_API_KEY", "fake-key")
+    result = runner.invoke(
+        app, BASE_ARGS + ["--wandb", "--wandb-project", "proj", "--wandb-job-type", "custom", "myscript.py"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "--job-type custom" in result.output
+
+
+def test_wandb_requires_project_but_not_job_type(monkeypatch):
+    monkeypatch.setenv("WANDB_API_KEY", "fake-key")
+    result = runner.invoke(app, BASE_ARGS + ["--wandb", "myscript.py"])
+    assert result.exit_code != 0
+    assert "Error: --wandb requires --wandb-project" in result.output
