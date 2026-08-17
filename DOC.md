@@ -89,8 +89,13 @@ leading positional).
 
 ## `wandb_wrap.py`
 Invoked as the job's actual command when `--wandb` is set:
-`python -m hailrun.wandb_wrap --project ... -- <real command>`. Calls
-`init_hail_wandb()`, then runs the real command via `subprocess.Popen` with piped
+`python -m wandb_wrap --project ... -- <real command>`. `dispatch.py` ships this file
+(plus `wandb_utils.py`) to the job container as loose modules on `PYTHONPATH`
+(`WANDB_WRAP_MOUNT`), not via an installed `hailrun` package -- so the job image only
+needs plain `wandb`, not `hailrun[wandb]`. The `from hailrun.wandb_utils import ...`
+at the top falls back to a bare `from wandb_utils import ...` (`ModuleNotFoundError`)
+so the same file still works normally when `hailrun` *is* installed (e.g. manual use).
+Calls `init_hail_wandb()`, then runs the real command via `subprocess.Popen` with piped
 stdout, re-printing each line from this (parent) process. That re-print is required --
 a plain `subprocess.run()` with inherited stdio does *not* get picked up by wandb's
 console capture (verified empirically: no `output.log` was ever uploaded), because

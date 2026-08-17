@@ -131,9 +131,10 @@ hailrun dispatch --wandb --wandb-project my-project \
 ```
 
 Requires `WANDB_API_KEY` in the submitting environment (forwarded to the job, never
-on the command line) and the image to have `hailrun[wandb]` installed. The script
-itself needs zero wandb-specific code -- hailrun wraps the job command in a wandb run
-tied to the job's Hail batch/job/attempt IDs.
+on the command line) and the image to have plain `wandb` installed (hailrun itself
+does not need to be in the image -- dispatch ships its small wrap module to the job
+as a loose file). The script itself needs zero wandb-specific code -- hailrun wraps
+the job command in a wandb run tied to the job's Hail batch/job/attempt IDs.
 
 `--wandb-job-type` is optional and defaults to the wrapped script's own name (e.g.
 `my_script.py` -> job_type `my_script`). Pass it explicitly to override.

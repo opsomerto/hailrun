@@ -1,9 +1,11 @@
-"""python -m hailrun.wandb_wrap --project X --job-type Y [--hail-batch-name NAME] -- {command...}
+"""python -m wandb_wrap --project X --job-type Y [--hail-batch-name NAME] -- {command...}
 
 Auto-wraps an arbitrary subprocess command in a wandb run tied to the enclosing Hail
 Batch job, so the wrapped script needs zero wandb-specific code. Invoked directly as a
 job command string (not through the `hailrun` CLI), so this uses argparse and its own
-"--" split rather than typer.
+"--" split rather than typer. `hailrun dispatch --wandb` ships this module to the job as
+a loose file (see dispatch.py's WANDB_WRAP_MOUNT) so it runs as top-level `wandb_wrap`,
+not `hailrun.wandb_wrap` -- it also still works installed normally, e.g. for manual use.
 
 Empirically verified (not just assumed): a plain subprocess.run() inheriting stdio does
 NOT get captured into the run's Logs tab under wandb 0.28 -- confirmed by inspecting a
@@ -20,7 +22,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from hailrun.wandb_utils import init_hail_wandb
+try:
+    from hailrun.wandb_utils import init_hail_wandb
+except ModuleNotFoundError:
+    # Dispatch ships this file to the job container as a loose module (alongside a
+    # copy of wandb_utils.py on PYTHONPATH) so jobs don't need hailrun itself
+    # installed in the image -- only `wandb`. See dispatch.py's WANDB_WRAP_MOUNT.
+    from wandb_utils import init_hail_wandb
 
 
 def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
@@ -30,7 +38,7 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     else:
         own_argv, command = argv, []
 
-    parser = argparse.ArgumentParser(prog="python -m hailrun.wandb_wrap")
+    parser = argparse.ArgumentParser(prog="python -m wandb_wrap")
     parser.add_argument("--project", required=True)
     parser.add_argument(
         "--job-type",

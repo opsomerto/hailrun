@@ -25,6 +25,7 @@ from hailrun import context as context_mod
 from hailrun import sharding
 
 CONTEXT_MOUNT = "/tmp/hailrun-context"
+WANDB_WRAP_MOUNT = "/tmp/hailrun-wandb"
 
 
 def _set_machine_type(j, machine_type: str) -> None:
@@ -230,7 +231,7 @@ def run(
         target = f"{baked_path.rstrip('/')}/{script}" if baked else script_rel
         tokens = ["python", target] + _job_tokens(i, shard_values)
         if wandb:
-            wrap_tokens = ["python", "-m", "hailrun.wandb_wrap", "--project", wandb_project]
+            wrap_tokens = ["python", "-m", "wandb_wrap", "--project", wandb_project]
             if wandb_job_type:
                 wrap_tokens += ["--job-type", wandb_job_type]
             wrap_tokens += ["--hail-batch-name", job_name, "--"]
@@ -292,6 +293,15 @@ def run(
     shard_resources = [b.read_input(str(p)) for p in shard_paths] if shard_paths else []
     shard_values = [str(r) for r in shard_resources]
 
+    wandb_wrap_resource = None
+    wandb_utils_resource = None
+    if wandb:
+        # Shipped as loose files (not relying on hailrun being installed in the
+        # image) so --wandb only requires plain `wandb` in the job's image.
+        pkg_dir = Path(__file__).resolve().parent
+        wandb_wrap_resource = b.read_input(str(pkg_dir / "wandb_wrap.py"))
+        wandb_utils_resource = b.read_input(str(pkg_dir / "wandb_utils.py"))
+
     for i in range(n_jobs):
         j = b.new_job(name=f"{Path(script).stem}-{i:04d}")
         j.image(hail_image)
@@ -309,12 +319,20 @@ def run(
         if wandb:
             j.env("WANDB_API_KEY", wandb_api_key)
             j.env("HAIL_BATCH_NAME", job_name)
+            j.command(
+                f"mkdir -p {WANDB_WRAP_MOUNT} && "
+                f"cp {wandb_wrap_resource} {WANDB_WRAP_MOUNT}/wandb_wrap.py && "
+                f"cp {wandb_utils_resource} {WANDB_WRAP_MOUNT}/wandb_utils.py"
+            )
 
         run_cmd = _run_cmd(i, shard_values)
         if baked:
-            j.command(run_cmd)
+            cmd = f"PYTHONPATH={WANDB_WRAP_MOUNT}:$PYTHONPATH {run_cmd}" if wandb else run_cmd
+            j.command(cmd)
         else:
             pythonpath = f"{CONTEXT_MOUNT}/src:{CONTEXT_MOUNT}" if has_src_layout else CONTEXT_MOUNT
+            if wandb:
+                pythonpath = f"{WANDB_WRAP_MOUNT}:{pythonpath}"
             j.command(f"mkdir -p {CONTEXT_MOUNT} && tar -xzf {context_resource} -C {CONTEXT_MOUNT}")
             j.command(f"cd {CONTEXT_MOUNT} && PYTHONPATH={pythonpath}:$PYTHONPATH {run_cmd}")
 
