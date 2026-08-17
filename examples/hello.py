@@ -14,7 +14,7 @@ except ImportError:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", default=None)
+    parser.add_argument("shard", nargs="?", default=None)
     parser.add_argument("--name", default="world")
     args = parser.parse_args()
 
@@ -23,8 +23,8 @@ def main() -> None:
     else:
         print(f"hello, {args.name} (sibling import failed)")
 
-    if args.input:
-        print(f"input shard: {args.input}")
+    if args.shard:
+        print(f"input shard: {args.shard}")
 
 
 if __name__ == "__main__":

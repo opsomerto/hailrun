@@ -63,18 +63,75 @@ def run(
         False, "--baked/--no-context-sync", help="Skip code sync; assume script already exists in the image."
     ),
     baked_path: str = typer.Option("/app", "--baked-path", help="Only used with --baked."),
-    shard_input: Path | None = typer.Option(None, "--shard-input", help="File to split into --hail-shards shards."),
+    shard_input: Path | None = typer.Option(
+        None,
+        "--shard-input",
+        help="File to split into --hail-shards shards, or a directory of pre-made shard files to use as-is.",
+    ),
     shard_format: str = typer.Option("auto", "--shard-format", help="text, csv, parquet, or auto."),
+    shard_flag: str | None = typer.Option(
+        None,
+        "--shard-flag",
+        help=(
+            "Flag in the script's own args to receive the shard value, e.g. --arg-a "
+            "(leading dashes optional, normalized automatically). If omitted, the shard "
+            "value is prepended as a leading positional arg. Ignored in favor of a literal "
+            "{shard} token if one is present in the script args -- passing both is an error."
+        ),
+    ),
     wandb: bool = typer.Option(False, "--wandb/--no-wandb", help="Auto-wrap the job command in a wandb run."),
     wandb_project: str | None = typer.Option(None, "--wandb-project"),
     wandb_job_type: str | None = typer.Option(None, "--wandb-job-type"),
 ) -> None:
     script_args: list[str] = list(ctx.args)
 
-    if shard_input is not None and hail_shards <= 1:
-        typer.echo("Error: --shard-input requires --hail-shards N with N > 1", err=True)
+    if shard_flag is not None and not shard_flag.startswith("-"):
+        shard_flag = f"--{shard_flag}"
+
+    shard_mode = None  # "file" | "dir" | None
+    dir_shard_files: list[Path] = []
+    if shard_input is not None:
+        if not shard_input.exists():
+            typer.echo(f"Error: --shard-input path not found: {shard_input}", err=True)
+            raise typer.Exit(1)
+        shard_mode = "dir" if shard_input.is_dir() else "file"
+
+    if shard_flag is not None and shard_input is None:
+        typer.echo("Error: --shard-flag requires --shard-input", err=True)
         raise typer.Exit(1)
-    if hail_shards > 1 and shard_input is None:
+    if shard_flag is not None and "{shard}" in script_args:
+        typer.echo(
+            "Error: pass either --shard-flag or a literal {shard} token in the script args, "
+            "not both (ambiguous which one should receive the shard value)",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    if shard_mode == "file":
+        if hail_shards <= 1:
+            typer.echo("Error: --shard-input FILE requires --hail-shards N with N > 1", err=True)
+            raise typer.Exit(1)
+    elif shard_mode == "dir":
+        if shard_format != "auto":
+            print(
+                f"  ! --shard-format {shard_format!r} is ignored in directory mode "
+                "(files are used as-is, not split)"
+            )
+        try:
+            dir_shard_files = sharding.list_shard_dir(shard_input)
+        except ValueError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1)
+        n_dir_files = len(dir_shard_files)
+        if hail_shards not in (0, n_dir_files):
+            typer.echo(
+                f"Error: --hail-shards {hail_shards} does not match the {n_dir_files} file(s) "
+                f"found in --shard-input directory {shard_input} "
+                "(omit --hail-shards to infer it automatically)",
+                err=True,
+            )
+            raise typer.Exit(1)
+    elif hail_shards > 1:
         typer.echo(
             "Error: --hail-shards > 1 requires --shard-input PATH "
             "(the target script no longer needs to slice input itself -- pass the file to split).",
@@ -111,11 +168,14 @@ def run(
 
     n_jobs = 1
     shard_paths: list[Path] = []
-    if shard_input is not None:
+    if shard_mode == "file":
         fmt = shard_format if shard_format != "auto" else sharding.detect_format(shard_input)
         tmp_shard_dir = Path(tempfile.mkdtemp(prefix="hailrun-shards-"))
         shard_paths = sharding.split_file(shard_input, hail_shards, fmt, tmp_shard_dir)
         n_jobs = hail_shards
+    elif shard_mode == "dir":
+        shard_paths = dir_shard_files
+        n_jobs = len(shard_paths)
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     job_name = hail_job_name or f"{Path(script).stem}-{stamp}"
@@ -123,17 +183,34 @@ def run(
 
     def _job_tokens(i: int, shard_values: list[str]) -> list[str]:
         """shard_values[i] is either a local-path string (dry run) or a hailtop
-        ResourceFile's interpolation token (real submission) -- substituted into a
-        `{shard}` placeholder in the script's own args if present, else appended
-        as `--input <value>`."""
+        ResourceFile's interpolation token (real submission) -- injected into the
+        script's own args by three-tier precedence: a literal `{shard}` token wins
+        if present; else --shard-flag NAME finds/replaces/appends that named flag;
+        else the value is prepended as a leading positional arg."""
         tokens = list(script_args)
-        if shard_values:
-            value = shard_values[i]
-            if "{shard}" in tokens:
-                tokens[tokens.index("{shard}")] = value
-            else:
-                tokens += ["--input", value]
-        return tokens
+        if not shard_values:
+            return tokens
+        value = shard_values[i]
+
+        if "{shard}" in tokens:
+            tokens[tokens.index("{shard}")] = value
+            return tokens
+
+        if shard_flag is not None:
+            if shard_flag in tokens:
+                idx = tokens.index(shard_flag)
+                if idx == len(tokens) - 1:
+                    tokens.append(value)
+                else:
+                    tokens[idx + 1] = value
+                return tokens
+            inline_idx = next((j for j, t in enumerate(tokens) if t.startswith(f"{shard_flag}=")), None)
+            if inline_idx is not None:
+                tokens[inline_idx] = f"{shard_flag}={value}"
+                return tokens
+            return tokens + [shard_flag, value]
+
+        return [value] + tokens
 
     def _run_cmd(i: int, shard_values: list[str]) -> str:
         target = f"{baked_path.rstrip('/')}/{script}" if baked else script_rel

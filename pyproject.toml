@@ -1,6 +1,6 @@
 [project]
 name = "hailrun"
-version = "0.1.0"
+version = "0.2.0"
 description = "Run local scripts as Hail Batch jobs, with code-context sync, file sharding, and wandb integration."
 readme = "README.md"
 requires-python = ">=3.12"

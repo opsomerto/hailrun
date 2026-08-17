@@ -112,6 +112,17 @@ def split_parquet(path: Path, n: int, out_dir: Path) -> list[Path]:
     return out_paths
 
 
+def list_shard_dir(path: Path) -> list[Path]:
+    """Sorted, non-recursive list of regular files in `path`, for directory-mode
+    sharding (files used as-is, no splitting). Skips subdirectories and dotfiles
+    (e.g. .DS_Store) so stray filesystem artifacts don't become spurious jobs."""
+    path = Path(path)
+    files = sorted(p for p in path.iterdir() if p.is_file() and not p.name.startswith("."))
+    if not files:
+        raise ValueError(f"shard directory {path} contains no files")
+    return files
+
+
 def split_file(path: Path, n: int, fmt: str, out_dir: Path) -> list[Path]:
     path, out_dir = Path(path), Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

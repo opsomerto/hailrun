@@ -96,3 +96,37 @@ def test_split_file_unknown_format(tmp_path):
     src.write_text("a\nb\nc\n")
     with pytest.raises(ValueError):
         sharding.split_file(src, 2, "bogus", tmp_path / "out")
+
+
+def test_list_shard_dir_returns_sorted_files(tmp_path):
+    for name in ["shard2.txt", "shard10.txt", "shard1.txt"]:
+        (tmp_path / name).write_text("x")
+    files = sharding.list_shard_dir(tmp_path)
+    assert [p.name for p in files] == ["shard1.txt", "shard10.txt", "shard2.txt"]
+
+
+def test_list_shard_dir_skips_subdirectories(tmp_path):
+    (tmp_path / "a.txt").write_text("x")
+    (tmp_path / "b.txt").write_text("x")
+    (tmp_path / "subdir").mkdir()
+    (tmp_path / "subdir" / "c.txt").write_text("x")
+    files = sharding.list_shard_dir(tmp_path)
+    assert [p.name for p in files] == ["a.txt", "b.txt"]
+
+
+def test_list_shard_dir_skips_dotfiles(tmp_path):
+    (tmp_path / ".DS_Store").write_text("x")
+    (tmp_path / "a.txt").write_text("x")
+    files = sharding.list_shard_dir(tmp_path)
+    assert [p.name for p in files] == ["a.txt"]
+
+
+def test_list_shard_dir_empty_raises(tmp_path):
+    with pytest.raises(ValueError):
+        sharding.list_shard_dir(tmp_path)
+
+
+def test_list_shard_dir_only_dotfiles_raises(tmp_path):
+    (tmp_path / ".DS_Store").write_text("x")
+    with pytest.raises(ValueError):
+        sharding.list_shard_dir(tmp_path)

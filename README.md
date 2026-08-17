@@ -54,14 +54,57 @@ change.
 ```bash
 hailrun dispatch --hail-shards 8 --shard-input big_file.csv \
   --hail-image ... --hail-billing-project ... --hail-tmp-bucket ... \
-  my_script.py --input {shard}
+  my_script.py --name foo
 ```
 
 `hailrun` splits `big_file.csv` into 8 shard files once at submit time (text, csv,
-or parquet -- auto-detected from the extension, or set `--shard-format`), and
-substitutes each job's shard path into the `{shard}` placeholder in the script's own
-args (or appends `--input <shard_path>` if no placeholder is present). The target
-script never needs to implement its own slicing logic.
+or parquet -- auto-detected from the extension, or set `--shard-format`), then runs
+8 jobs. By default each job gets its shard path as a **leading positional arg** --
+`my_script.py` above receives `python my_script.py <shard_path> --name foo` -- so the
+target script only needs to accept a plain positional argument, no hailrun-specific
+flag name required.
+
+Two ways to control exactly where the shard value lands in the script's own args:
+
+- `--shard-flag NAME` (e.g. `--shard-flag --arg-a`, dashes optional) -- hailrun finds
+  `--arg-a` in the script's args and fills in its value, or appends `--arg-a
+  <shard_path>` if the flag isn't already there:
+  ```bash
+  hailrun dispatch --hail-shards 8 --shard-input big_file.csv --shard-flag --arg-a \
+    --hail-image ... --hail-billing-project ... --hail-tmp-bucket ... \
+    my_script.py --arg-a placeholder
+  ```
+- A literal `{shard}` token anywhere in the script's args -- hailrun substitutes that
+  exact token in place. Useful for positioning the value somewhere other than the
+  front, or inside a flag's value without going through `--shard-flag`:
+  ```bash
+  my_script.py --config "input={shard}"
+  ```
+  `--shard-flag` and a literal `{shard}` token can't be combined -- pick one.
+
+### Running on a directory of pre-made shards
+
+If the shards already exist (split upstream, or hand-curated), point `--shard-input`
+at the directory instead of a file -- no splitting happens, hailrun just runs one job
+per file:
+
+```bash
+hailrun dispatch --shard-input pre_split_shards/ \
+  --hail-image ... --hail-billing-project ... --hail-tmp-bucket ... \
+  my_script.py --name foo
+```
+
+`--hail-shards` is optional here -- it's inferred from the file count. Pass it anyway
+if you want a sanity check (it must match the actual file count, or hailrun errors).
+`--shard-format` has no effect in this mode since nothing gets split.
+
+### Breaking change (0.2.0)
+
+Before 0.2.0, a script that didn't use `{shard}` received its shard via an implicit
+`--input <path>` append. That fallback is gone -- the new default is a leading
+positional arg instead. Scripts written against the old default need
+`--shard-flag --input` added to their `hailrun dispatch` invocation to keep working
+unchanged.
 
 ### wandb monitoring
 
