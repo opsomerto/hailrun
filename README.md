@@ -98,13 +98,6 @@ hailrun dispatch --shard-input pre_split_shards/ \
 if you want a sanity check (it must match the actual file count, or hailrun errors).
 `--shard-format` has no effect in this mode since nothing gets split.
 
-### Breaking change (0.2.0)
-
-Before 0.2.0, a script that didn't use `{shard}` received its shard via an implicit
-`--input <path>` append. That fallback is gone -- the new default is a leading
-positional arg instead. Scripts written against the old default need
-`--shard-flag --input` added to their `hailrun dispatch` invocation to keep working
-unchanged.
 
 ### wandb monitoring
 
