@@ -49,6 +49,29 @@ change.
 - Use `--baked` if the script is already baked into the image instead (assumed at
   `--baked-path`, default `/app`) -- skips the sync step entirely.
 
+### Checking script args before submitting
+
+```bash
+hailrun dispatch --verify-args \
+  --hail-image ... --hail-billing-project ... --hail-tmp-bucket ... \
+  my_script.py --some-script-flag value
+```
+
+`--verify-args` is a best-effort local check that the script's own argument parser
+accepts the script args, so a typo'd or missing flag fails fast locally instead of
+after a job starts on Hail Batch.
+
+- Only works if the script imports `argparse`, `click`, or `typer` -- detected via a
+  static scan of the script's imports, no execution. If none is detected, the check is
+  skipped with a warning and submission proceeds as normal.
+- It runs the script locally in a subprocess, patched to stop right after argument
+  parsing succeeds or fails -- the script's real logic never runs, but import-time
+  side effects (heavy imports, network calls, etc.) do, since parsing can't be checked
+  without importing the script. If verification can't complete (missing local
+  dependency, unexpected exception, timeout), it's reported and submission proceeds
+  unchecked rather than being blocked by a problem with the check itself.
+- Ignored with `--baked`, since there's no local script file to check.
+
 ### Sharding a big input file
 
 ```bash

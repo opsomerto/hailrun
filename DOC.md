@@ -32,6 +32,40 @@ prepended as a leading positional arg. `--shard-flag` and a literal `{shard}` to
 together is a guard-clause error (ambiguous). `--shard-flag` without `--shard-input`
 is also a guard-clause error.
 
+If `--verify-args`, right after `_job_tokens`/`_run_cmd` are defined (so shard values
+are substituted the same way a real job would see them) and before the `--hail-dry-run`
+branch: skipped for `--baked` (no local file), else delegates to `verify.py`.
+
+## `verify.py` / `_verify_runner.py`
+`verify.py:detect_framework()` statically AST-scans the script's top-level imports for
+`argparse`/`click`/`typer` -- no execution. If none found, verification is skipped.
+Otherwise `verify_script_args()` shells out to `_verify_runner.py` in a subprocess
+(`NO_COLOR`/`TERM=dumb` env to keep click/typer output plain), passing the framework,
+script path, an extra-`sys.path` string (context dir + src-layout dir, mirroring the
+real job's `PYTHONPATH`), and the script args.
+
+`_verify_runner.py` monkeypatches the parsing entrypoint to abort right after parsing
+completes, so the script's real logic never runs -- only import + arg parsing does:
+`argparse.ArgumentParser.parse_args` is wrapped to call the original then raise a
+sentinel; `click.Command.invoke` (also covers typer, which builds click Commands under
+the hood, and `Group`/`MultiCommand` subcommand dispatch eventually calls the same
+`Command.invoke`) is replaced to raise the sentinel instead of running the real command
+body. The sentinel means "parsing succeeded" -> `HAILRUN_VERIFY_OK`. A `SystemExit`
+with nonzero code from the framework's own error path (argparse always exits 2 on a
+parse error; click/typer usage errors also exit nonzero) propagates as that exit code,
+read back as `bad_args`. Exiting 0 *without* the sentinel having fired, or running to
+completion without ever calling the patched method, means the script never reached its
+real parser (early exit, a `no_args_is_help` branch, conditional parsing, etc.) --
+reported as `HAILRUN_VERIFY_UNKNOWN`/`inconclusive`, not `ok`, since exit-0 alone isn't
+proof the args are valid. Any other failure (missing dependency, unrelated exception,
+subprocess timeout) is also `inconclusive` -- the check degrades to "couldn't verify",
+never blocks submission on a problem with the check itself, only on an actual parse
+error caught red-handed.
+
+Known limitation: only the common single top-level `parser.parse_args()` call is
+patched for argparse, not a bare `parse_known_args()` used on its own without a
+wrapping `parse_args()` call.
+
 ## `context.py`
 `build_context_tar()` walks the context dir, drops anything matching
 `.gcloudignore`/`.dockerignore`/`.gitignore` (first found, in that order) or the
