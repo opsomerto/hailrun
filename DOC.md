@@ -9,6 +9,15 @@ tried. The `version` command exists partly to keep that collapse from happening 
 `context_settings={"ignore_unknown_options": True, "allow_extra_args": True}` on the
 `dispatch` command is what lets script args pass through without a `--` separator.
 
+`main()` special-cases `hailrun dispatch ... --help`: after Click's own eager
+`--help` shows dispatch's help and exits (a `SystemExit`, caught by wrapping the
+`app()` call in `try`/`finally`), `print_script_help()` resolves what script would've
+been dispatched -- via `dispatch_cmd.make_context(..., resilient_parsing=True)`,
+which parses the same argv without requiring `--hail-image` etc. or invoking
+`dispatch.run()` -- and if it exists locally, shells out to it with `--help` too.
+Best-effort: silently does nothing if the script can't be resolved or doesn't exist
+locally (e.g. `--baked`, where the "script" is a path inside the image, not on disk).
+
 ## `dispatch.py`
 `run()` does, in order: validate options -> build the code-context tar (`context.py`,
 skipped if `--baked`) -> if `--shard-input` given, branch on `shard_input.is_dir()`:
@@ -30,9 +39,22 @@ NAME` (dashes auto-normalized) finds/replaces/appends that named flag (in-place
 replace, `NAME=value` inline replace, or append if absent); else the value is
 prepended as a leading positional arg. `--shard-flag` and a literal `{shard}` token
 together is a guard-clause error (ambiguous). `--shard-flag` without `--shard-input`
-is also a guard-clause error.
+is also a guard-clause error. The find/replace half of that (not the "prepend if
+absent" fallback) is shared with `--upload-arg` via the module-level
+`_find_flag_value`/`_replace_flag_value` helpers.
 
-If `--verify-args`, right after `_job_tokens`/`_run_cmd` are defined (so shard values
+`--upload-arg NAME` (dashes auto-normalized, repeatable) is validated up front --
+`NAME` must already be present in the script args (`_find_flag_value`) with an
+existing, non-directory local path as its value -- then each named file is
+`b.read_input()`'d once (same mechanism as the context tarball and shard files) and
+`_job_tokens()` rewrites that arg's value to the resulting `ResourceFile` token via
+`_replace_flag_value()`, same for every job since the file doesn't vary by shard.
+Works under `--baked` too (no context-membership check -- always uploaded
+individually, simpler than tracking whether the file happens to already be inside the
+synced context dir).
+
+If `--verify-args` (on by default; `--no-verify-args` to skip), right after
+`_job_tokens`/`_run_cmd` are defined (so shard values
 are substituted the same way a real job would see them) and before the `--hail-dry-run`
 branch: skipped for `--baked` (no local file), else delegates to `verify.py`.
 

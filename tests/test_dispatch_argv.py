@@ -308,6 +308,72 @@ def test_verify_args_argparse_missing_required_blocks_submission(tmp_path):
     assert "Submitting" not in result.output
 
 
+def test_verify_args_on_by_default_blocks_bad_args(tmp_path):
+    script = tmp_path / "s.py"
+    script.write_text(
+        "import argparse\n"
+        "p = argparse.ArgumentParser()\n"
+        "p.add_argument('--foo', required=True, type=int)\n"
+        "p.parse_args()\n"
+    )
+    result = runner.invoke(app, NOT_BAKED_BASE_ARGS + [str(script)])
+    assert result.exit_code != 0
+    assert "rejected args during local --verify-args check" in result.output
+
+
+def test_no_verify_args_skips_check(tmp_path):
+    script = tmp_path / "s.py"
+    script.write_text(
+        "import argparse\n"
+        "p = argparse.ArgumentParser()\n"
+        "p.add_argument('--foo', required=True, type=int)\n"
+        "p.parse_args()\n"
+    )
+    result = runner.invoke(app, NOT_BAKED_BASE_ARGS + ["--no-verify-args", str(script)])
+    assert result.exit_code == 0, result.output
+    assert "Submitting 1 job(s)" in result.output
+
+
+def test_upload_arg_uploads_and_leaves_value_unchanged_in_dry_run(tmp_path):
+    data_file = tmp_path / "data.txt"
+    data_file.write_text("hello\n")
+    result = runner.invoke(
+        app, BASE_ARGS + ["--upload-arg", "--arg-b", "myscript.py", "--arg-a", "gs://x", "--arg-b", str(data_file)]
+    )
+    assert result.exit_code == 0, result.output
+    assert f"--arg-b {data_file}" in result.output
+    assert "uploads:" in result.output
+
+
+def test_upload_arg_normalizes_missing_dashes(tmp_path):
+    data_file = tmp_path / "data.txt"
+    data_file.write_text("hello\n")
+    result = runner.invoke(app, BASE_ARGS + ["--upload-arg", "arg-b", "myscript.py", "--arg-b", str(data_file)])
+    assert result.exit_code == 0, result.output
+
+
+def test_upload_arg_missing_flag_errors():
+    result = runner.invoke(app, BASE_ARGS + ["--upload-arg", "--arg-c", "myscript.py", "--arg-b", "x"])
+    assert result.exit_code != 0
+    assert "flag not found in script args" in result.output
+
+
+def test_upload_arg_nonexistent_path_errors():
+    result = runner.invoke(
+        app, BASE_ARGS + ["--upload-arg", "--arg-b", "myscript.py", "--arg-b", "/nonexistent/path/xyz"]
+    )
+    assert result.exit_code != 0
+    assert "local path not found" in result.output
+
+
+def test_upload_arg_directory_errors(tmp_path):
+    d = tmp_path / "adir"
+    d.mkdir()
+    result = runner.invoke(app, BASE_ARGS + ["--upload-arg", "--arg-b", "myscript.py", "--arg-b", str(d)])
+    assert result.exit_code != 0
+    assert "is a directory" in result.output
+
+
 def test_shard_format_ignored_in_directory_mode_warns(tmp_path):
     shard_dir = tmp_path / "shards"
     shard_dir.mkdir()

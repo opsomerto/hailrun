@@ -9,8 +9,13 @@ looks like a flag -- as long as hailrun's own options come before the script pat
 explicit literal `--` still works too (Click's standard "stop parsing options" marker),
 useful if a script argument happens to collide with a hailrun option name.
 
-Pass --verify-args for a best-effort local check that the script's own argparse/click/
-typer parser accepts the given script args before submitting -- see hailrun.verify.
+--verify-args is on by default: a best-effort local check that the script's own
+argparse/click/typer parser accepts the given script args before submitting -- pass
+--no-verify-args to skip it. See hailrun.verify.
+
+Pass --upload-arg NAME (repeatable) to upload a local file passed as one of the
+script's own args and rewrite that arg to the job's copy, e.g. `--upload-arg --arg-b`
+for `my_script.py --arg-b /local/path/to/file`.
 """
 
 import os
@@ -39,6 +44,34 @@ def _set_machine_type(j, machine_type: str) -> None:
     j._machine_type = machine_type
 
 
+def _find_flag_value(tokens: list[str], flag: str) -> str | None:
+    """Value of `flag` in tokens, as `flag value` or `flag=value`, or None if absent."""
+    if flag in tokens:
+        idx = tokens.index(flag)
+        return tokens[idx + 1] if idx + 1 < len(tokens) else None
+    for t in tokens:
+        if t.startswith(f"{flag}="):
+            return t.split("=", 1)[1]
+    return None
+
+
+def _replace_flag_value(tokens: list[str], flag: str, value: str) -> list[str]:
+    """Replace `flag`'s existing value (either form); no-op if `flag` isn't present."""
+    tokens = list(tokens)
+    if flag in tokens:
+        idx = tokens.index(flag)
+        if idx + 1 < len(tokens):
+            tokens[idx + 1] = value
+        else:
+            tokens.append(value)
+        return tokens
+    for i, t in enumerate(tokens):
+        if t.startswith(f"{flag}="):
+            tokens[i] = f"{flag}={value}"
+            return tokens
+    return tokens
+
+
 def run(
     ctx: typer.Context,
     script: str = typer.Argument(..., help="Local script to run as a Hail Batch job."),
@@ -62,8 +95,8 @@ def run(
     hail_wait: bool = typer.Option(False, "--hail-wait/--hail-no-wait"),
     hail_dry_run: bool = typer.Option(False, "--hail-dry-run"),
     verify_args: bool = typer.Option(
-        False,
-        "--verify-args",
+        True,
+        "--verify-args/--no-verify-args",
         help=(
             "Best-effort local check that the script's own argparse/click/typer parser "
             "accepts the script args before submitting (skipped for --baked scripts or "
@@ -72,6 +105,15 @@ def run(
     ),
     context_dir: Path | None = typer.Option(None, "--context-dir", help="Defaults to the script's own directory."),
     context_exclude: list[str] = typer.Option([], "--context-exclude", help="Extra exclude pattern, repeatable."),
+    upload_arg: list[str] = typer.Option(
+        [],
+        "--upload-arg",
+        help=(
+            "Flag in the script's own args whose value is a local file to upload, e.g. "
+            "--arg-b (leading dashes optional, normalized automatically; repeatable). "
+            "The arg is rewritten to the job's copy of the file."
+        ),
+    ),
     baked: bool = typer.Option(
         False, "--baked/--no-context-sync", help="Skip code sync; assume script already exists in the image."
     ),
@@ -102,6 +144,22 @@ def run(
 
     if shard_flag is not None and not shard_flag.startswith("-"):
         shard_flag = f"--{shard_flag}"
+
+    upload_paths: dict[str, Path] = {}
+    for flag in upload_arg:
+        flag = flag if flag.startswith("-") else f"--{flag}"
+        value = _find_flag_value(script_args, flag)
+        if value is None:
+            typer.echo(f"Error: --upload-arg {flag}: flag not found in script args", err=True)
+            raise typer.Exit(1)
+        p = Path(value)
+        if not p.exists():
+            typer.echo(f"Error: --upload-arg {flag}: local path not found: {p}", err=True)
+            raise typer.Exit(1)
+        if p.is_dir():
+            typer.echo(f"Error: --upload-arg {flag}: {p} is a directory, only files are supported", err=True)
+            raise typer.Exit(1)
+        upload_paths[flag] = p
 
     shard_mode = None  # "file" | "dir" | None
     dir_shard_files: list[Path] = []
@@ -196,13 +254,18 @@ def run(
     job_name = hail_job_name or f"{Path(script).stem}-{stamp}"
     env_vars = dict(kv.split("=", 1) for kv in hail_env)
 
-    def _job_tokens(i: int, shard_values: list[str]) -> list[str]:
+    def _job_tokens(i: int, shard_values: list[str], upload_values: dict[str, str] | None = None) -> list[str]:
         """shard_values[i] is either a local-path string (dry run) or a hailtop
         ResourceFile's interpolation token (real submission) -- injected into the
         script's own args by three-tier precedence: a literal `{shard}` token wins
         if present; else --shard-flag NAME finds/replaces/appends that named flag;
-        else the value is prepended as a leading positional arg."""
+        else the value is prepended as a leading positional arg. upload_values maps
+        each --upload-arg flag to its replacement value (also a local path or a
+        ResourceFile token, in the same dry-run/real-submission split as shards)."""
         tokens = list(script_args)
+        for flag, value in (upload_values or {}).items():
+            tokens = _replace_flag_value(tokens, flag, value)
+
         if not shard_values:
             return tokens
         value = shard_values[i]
@@ -212,24 +275,15 @@ def run(
             return tokens
 
         if shard_flag is not None:
-            if shard_flag in tokens:
-                idx = tokens.index(shard_flag)
-                if idx == len(tokens) - 1:
-                    tokens.append(value)
-                else:
-                    tokens[idx + 1] = value
-                return tokens
-            inline_idx = next((j for j, t in enumerate(tokens) if t.startswith(f"{shard_flag}=")), None)
-            if inline_idx is not None:
-                tokens[inline_idx] = f"{shard_flag}={value}"
-                return tokens
+            if _find_flag_value(tokens, shard_flag) is not None:
+                return _replace_flag_value(tokens, shard_flag, value)
             return tokens + [shard_flag, value]
 
         return [value] + tokens
 
-    def _run_cmd(i: int, shard_values: list[str]) -> str:
+    def _run_cmd(i: int, shard_values: list[str], upload_values: dict[str, str] | None = None) -> str:
         target = f"{baked_path.rstrip('/')}/{script}" if baked else script_rel
-        tokens = ["python", target] + _job_tokens(i, shard_values)
+        tokens = ["python", target] + _job_tokens(i, shard_values, upload_values)
         if wandb:
             wrap_tokens = ["python", "-m", "wandb_wrap", "--project", wandb_project]
             if wandb_job_type:
@@ -273,6 +327,8 @@ def run(
             )
         if shard_paths:
             typer.echo(f"shards: {dry_run_shard_values}")
+        if upload_paths:
+            typer.echo(f"uploads: {[(flag, str(p)) for flag, p in upload_paths.items()]}")
         typer.echo(f"Submitting {n_jobs} job(s)...")
         for i in range(n_jobs):
             typer.echo(f"  job {i:04d}: {_run_cmd(i, dry_run_shard_values)}")
@@ -292,6 +348,7 @@ def run(
     context_resource = None if baked else b.read_input(str(tar_info.path))
     shard_resources = [b.read_input(str(p)) for p in shard_paths] if shard_paths else []
     shard_values = [str(r) for r in shard_resources]
+    upload_values = {flag: str(b.read_input(str(p))) for flag, p in upload_paths.items()}
 
     wandb_wrap_resource = None
     wandb_utils_resource = None
@@ -325,7 +382,7 @@ def run(
                 f"cp {wandb_utils_resource} {WANDB_WRAP_MOUNT}/wandb_utils.py"
             )
 
-        run_cmd = _run_cmd(i, shard_values)
+        run_cmd = _run_cmd(i, shard_values, upload_values)
         if baked:
             cmd = f"PYTHONPATH={WANDB_WRAP_MOUNT}:$PYTHONPATH {run_cmd}" if wandb else run_cmd
             j.command(cmd)

@@ -28,6 +28,10 @@ args -- put hailrun's flags before the script path, and everything after the scr
 path is forwarded byte-for-byte. An explicit `--` still works if a script argument
 happens to collide with a hailrun option name.
 
+`hailrun dispatch my_script.py --help` shows dispatch's own help, then -- if
+`my_script.py` exists locally -- runs it with `--help` too, so you don't need a
+separate `python my_script.py --help` to check the script's own args.
+
 ### Code delivery: the image only needs dependencies
 
 By default `hailrun` doesn't require your code to be baked into the Docker image at
@@ -49,17 +53,28 @@ change.
 - Use `--baked` if the script is already baked into the image instead (assumed at
   `--baked-path`, default `/app`) -- skips the sync step entirely.
 
-### Checking script args before submitting
+### Uploading a local file passed as a script arg
+
+If one of the script's own args is a local path (as opposed to something already on
+GCS), `--upload-arg` uploads it and rewrites the arg to the job's copy, so you don't
+have to `gsutil cp` it up and edit the command yourself:
 
 ```bash
-hailrun dispatch --verify-args \
+hailrun dispatch --upload-arg --arg-b \
   --hail-image ... --hail-billing-project ... --hail-tmp-bucket ... \
-  my_script.py --some-script-flag value
+  my_script.py --arg-a gs://path/on/the/cloud --arg-b /local/path/to/file
 ```
 
-`--verify-args` is a best-effort local check that the script's own argument parser
-accepts the script args, so a typo'd or missing flag fails fast locally instead of
-after a job starts on Hail Batch.
+`--upload-arg` names the script's own flag (leading dashes optional, repeatable for
+more than one); the flag must already be present in the script args with an existing
+local file as its value (directories aren't supported).
+
+### Checking script args before submitting
+
+`--verify-args` is on by default (pass `--no-verify-args` to skip it): a best-effort
+local check that the script's own argument parser accepts the script args, so a
+typo'd or missing flag fails fast locally instead of after a job starts on Hail
+Batch.
 
 - Only works if the script imports `argparse`, `click`, or `typer` -- detected via a
   static scan of the script's imports, no execution. If none is detected, the check is
