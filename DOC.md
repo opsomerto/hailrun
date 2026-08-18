@@ -14,9 +14,12 @@ tried. The `version` command exists partly to keep that collapse from happening 
 `app()` call in `try`/`finally`), `print_script_help()` resolves what script would've
 been dispatched -- via `dispatch_cmd.make_context(..., resilient_parsing=True)`,
 which parses the same argv without requiring `--hail-image` etc. or invoking
-`dispatch.run()` -- and if it exists locally, shells out to it with `--help` too.
-Best-effort: silently does nothing if the script can't be resolved or doesn't exist
-locally (e.g. `--baked`, where the "script" is a path inside the image, not on disk).
+`dispatch.run()` -- and if it exists locally, shells out to it with `--help` too,
+under `verify.TIMEOUT_S` (shared with `--verify-args` -- same cost, importing the
+script's own module-level code before its parser is even reached, can be slow for
+scripts with heavy imports like torch/transformers). Best-effort: silently does
+nothing if the script can't be resolved or doesn't exist locally (e.g. `--baked`,
+where the "script" is a path inside the image, not on disk).
 
 ## `dispatch.py`
 `run()` does, in order: validate options -> build the code-context tar (`context.py`,

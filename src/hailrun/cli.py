@@ -6,6 +6,7 @@ import typer
 from dotenv import load_dotenv
 
 from hailrun import __version__, dispatch
+from hailrun.verify import TIMEOUT_S
 
 load_dotenv(".env")
 
@@ -46,7 +47,9 @@ def print_script_help(dispatch_argv: list[str]) -> None:
         return
     typer.echo(f"\n--- {script} --help ---\n")
     try:
-        proc = subprocess.run([sys.executable, str(script), "--help"], capture_output=True, text=True, timeout=10)
+        proc = subprocess.run(
+            [sys.executable, str(script), "--help"], capture_output=True, text=True, timeout=TIMEOUT_S
+        )
         typer.echo(proc.stdout or proc.stderr)
     except Exception as e:
         typer.echo(f"(could not run {script} --help: {e})")

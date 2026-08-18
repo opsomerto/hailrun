@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _RUNNER = Path(__file__).parent / "_verify_runner.py"
-_TIMEOUT_S = 60
+TIMEOUT_S = 60  # shared with cli.py's script --help subprocess -- same "must import the script" cost
 
 
 @dataclass
@@ -64,11 +64,11 @@ def verify_script_args(
             [sys.executable, str(_RUNNER), framework, str(script_path), pythonpath_arg, *script_args],
             capture_output=True,
             text=True,
-            timeout=_TIMEOUT_S,
+            timeout=TIMEOUT_S,
             env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
         )
     except subprocess.TimeoutExpired:
-        return VerifyResult("inconclusive", f"local verify timed out after {_TIMEOUT_S}s")
+        return VerifyResult("inconclusive", f"local verify timed out after {TIMEOUT_S}s")
 
     if "HAILRUN_VERIFY_OK" in proc.stdout:
         return VerifyResult("ok")
